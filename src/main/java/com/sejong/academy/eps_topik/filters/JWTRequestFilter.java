@@ -12,6 +12,7 @@ import com.sejong.academy.eps_topik.exception.DeviceIdMisMatchException;
 import com.sejong.academy.eps_topik.exception.UserDisabledException;
 import com.sejong.academy.eps_topik.model.response.DefaultResponse;
 import com.sejong.academy.eps_topik.repository.AppUserRepository;
+import com.sejong.academy.eps_topik.repository.ParameterRepository;
 import com.sejong.academy.eps_topik.repository.TokenBlackListRepository;
 import com.sejong.academy.eps_topik.service.AuthUserDetailsService;
 import com.sejong.academy.eps_topik.util.LogMessageUtil;
@@ -35,6 +36,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,189 +45,190 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 @Order(3)
 public class JWTRequestFilter extends OncePerRequestFilter {
-
     private static final String MDC_UID_KEY = "uid";
-
     private final AuthUserDetailsService userService;
     private final AppUserRepository userRepository;
     private final TokenBlackListRepository tokenBlackListRepository;
+    private final ParameterRepository parameterRepository;
 
     @Value("${jwt.secret}")
     private String secretKey;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws IOException {
         try {
-            if (skipRefreshToken(request)) {
+
+            /*Parameter parameterByName = parameterRepository.findParameterByName(AppConstants.SYSTEM_STATUS);
+
+            if (parameterByName == null) {
+                throw new MissingParameterException("Parameter not found.");
+            }
+
+            boolean systemStatus = Boolean.parseBoolean(parameterByName.getValue())*/
+
+
+            boolean refreshToken = skipRefreshToken(request);
+
+            if (refreshToken) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+            String header = request.getHeader("Authorization");
+            if (header == null || !header.startsWith("Bearer ")) {
                 filterChain.doFilter(request, response);
                 return;
             }
 
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                filterChain.doFilter(request, response);
-                return;
-            }
-
-            UsernamePasswordAuthenticationToken authentication = getAuthentication(authHeader, request);
-
-            if (authentication != null) {
+            UsernamePasswordAuthenticationToken authentication = getAuthentication(header, request);
+            if (Objects.isNull(authentication)) {
+                log.info("Not authenticated. Public request.");
+            } else {
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
-
             filterChain.doFilter(request, response);
 
+
+        } catch (AlgorithmMismatchException e) {
+            log.error("doFilterInternal-> Exception: JWT algorithm mismatched");
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.INVALID_CREDENTIAL)
+                    .build();
+            generateErrorResponse(response, defaultResponse);
+        } catch (SignatureVerificationException e) {
+            log.error("doFilterInternal-> Exception: JWT signature verification failed");
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.INVALID_CREDENTIAL)
+                    .build();
+            generateErrorResponse(response, defaultResponse);
         } catch (TokenExpiredException e) {
-
-            sendError(response,
-                    ResponseCodeUtil.JWT_TOKEN_EXPIRED_ERROR_CODE,
-                    LogMessageUtil.INVALID_CREDENTIAL,
-                    HttpServletResponse.SC_UNAUTHORIZED);
-
-        } catch (DeviceIdMisMatchException e) {
-
-            sendError(response,
-                    ResponseCodeUtil.DEVICE_ID_MISMATCH_ERROR_CODE,
-                    LogMessageUtil.USER_ALREADY_LOGGED_IN_ANOTHER_DEVICE,
-                    402);
-
-        } catch (UserDisabledException e) {
-
-            sendError(response,
-                    ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE,
-                    e.getMessage(),
-                    HttpServletResponse.SC_UNAUTHORIZED);
-
+            log.error("doFilterInternal-> Exception: JWT expired");
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.JWT_TOKEN_EXPIRED_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.INVALID_CREDENTIAL)
+                    .build();
+            generateErrorResponse(response, defaultResponse);
+        } catch (InvalidClaimException e) {
+            log.error("doFilterInternal-> Exception: JWT claim not valid");
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.INVALID_CREDENTIAL)
+                    .build();
+            generateErrorResponse(response, defaultResponse);
         } catch (JWTVerificationException e) {
-
-            sendError(response,
-                    ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE,
-                    LogMessageUtil.INVALID_CREDENTIAL,
-                    HttpServletResponse.SC_UNAUTHORIZED);
-
+            log.error("doFilterInternal-> Exception: JWT verification failed");
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.INVALID_CREDENTIAL)
+                    .build();
+            generateErrorResponse(response, defaultResponse);
+        } catch (DeviceIdMisMatchException e) {
+            log.error("doFilterInternal-> Exception: Device Id mismatch.");
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.DEVICE_ID_MISMATCH_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.USER_ALREADY_LOGGED_IN_ANOTHER_DEVICE)
+                    .build();
+            generateErrorResponse(response, defaultResponse, 402);
         } catch (Exception e) {
-
-            log.error("JWT filter error", e);
-            sendError(response,
-                    ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE,
-                    LogMessageUtil.INVALID_CREDENTIAL,
-                    HttpServletResponse.SC_UNAUTHORIZED);
-
+            log.error("doFilterInternal-> Exception: " + e.getMessage(), e);
+            DefaultResponse defaultResponse = DefaultResponse.builder()
+                    .code(ResponseCodeUtil.JWT_TOKEN_VALIDATE_ERROR_CODE)
+                    .title(ResponseStatus.FAILED.name())
+                    .message(LogMessageUtil.INVALID_CREDENTIAL)
+                    .build();
+            generateErrorResponse(response, defaultResponse);
         } finally {
             MDC.remove(MDC_UID_KEY);
+            request.removeAttribute("JWTRequestFilter.FILTERED");
         }
     }
 
-    // ===================== AUTH =====================
-
-    private UsernamePasswordAuthenticationToken getAuthentication(
-            String authHeader,
-            HttpServletRequest request) {
-
-        try {
-            String token = authHeader.substring(7); // remove "Bearer "
-
-            DecodedJWT decodedJWT = JWT
-                    .require(Algorithm.HMAC512(secretKey))
+    // Reads the JWT from the Authorization header, and then uses JWT to validate the token
+    public UsernamePasswordAuthenticationToken getAuthentication(String token, HttpServletRequest request) {
+        if (token != null) {
+            // parse the token.
+            String username = JWT.require(Algorithm.HMAC512(secretKey.getBytes()))
                     .build()
-                    .verify(token);
+                    .verify(token.replace("Bearer ", ""))
+                    .getSubject();
 
-            String username = decodedJWT.getSubject();
-            if (username == null) return null;
+            if (username != null) {
+                UserDetails userDetails = userService.loadUserByUsername(username);
+                UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
 
-            UserDetails userDetails = userService.loadUserByUsername(username);
+                usernamePasswordAuthenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                AppUser appUser = userRepository.findOneByUsername(username);
+                String deviceId = request.getHeader("Device-Id");
+                if (appUser != null) {
+                    if (deviceId != null) {
+                        if (deviceId.equals(appUser.getDeviceId())) {
+                            if (appUser.getStatus().equals(Status.DISABLED.name())) {
+                                log.warn(LogMessageUtil.USER_DISABLED);
+                                throw new UserDisabledException(LogMessageUtil.USER_DISABLED);
+                            }
 
-            UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                            if (appUser.getStatus().equals(Status.LOCKED.name())) {
+                                log.warn(LogMessageUtil.USER_LOCKED);
+                                throw new UserDisabledException(LogMessageUtil.USER_LOCKED);
+                            }
 
-            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                            if (tokenBlackListRepository.existsByToken(token.replace("Bearer ", ""))) {
+                                log.warn("Token was blacklisted");
+                                throw new TokenExpiredException("The token was expired", Instant.now());
+                            }
 
-            validateUser(token, username, request);
-
-            return authentication;
-
-        } catch (JWTVerificationException e) {
+                            request.setAttribute("user", appUser);
+                            MDC.put(MDC_UID_KEY, appUser.getUsername());
+                        } else {
+                            log.warn(LogMessageUtil.DEVICE_ID_MISMATCH);
+                            throw new DeviceIdMisMatchException(LogMessageUtil.DEVICE_ID_MISMATCH);
+                        }
+                    } else {
+                        log.error(LogMessageUtil.DEVICE_ID_NOT_FOUND);
+                        throw new JWTVerificationException(LogMessageUtil.BAD_REQUEST);
+                    }
+//                    }
+                }
+                return usernamePasswordAuthenticationToken;
+            }
             return null;
         }
+        return null;
     }
 
-    // ===================== VALIDATION =====================
-
-    private void validateUser(String token, String username, HttpServletRequest request) {
-
-        AppUser appUser = userRepository.findOneByUsername(username);
-        if (appUser == null) return;
-
-        String clientType = request.getHeader("X-Client-Type");
-        String deviceId = request.getHeader("Device-Id");
-
-        boolean isMobileClient = clientType != null && clientType.equalsIgnoreCase("MOBILE");
-
-        // 🔐 Device-ID ONLY for MOBILE
-        if (isMobileClient) {
-
-            if (deviceId == null) {
-                throw new JWTVerificationException(LogMessageUtil.DEVICE_ID_NOT_FOUND);
-            }
-
-            if (!deviceId.equals(appUser.getDeviceId())) {
-                throw new DeviceIdMisMatchException(LogMessageUtil.DEVICE_ID_MISMATCH);
-            }
-        }
-
-        // 🚫 User status checks (web + mobile)
-        if (Status.DISABLED.name().equals(appUser.getStatus())) {
-            throw new UserDisabledException(LogMessageUtil.USER_DISABLED);
-        }
-
-        if (Status.LOCKED.name().equals(appUser.getStatus())) {
-            throw new UserDisabledException(LogMessageUtil.USER_LOCKED);
-        }
-
-        // ⛔ Token blacklist
-        if (tokenBlackListRepository.existsByToken(token)) {
-            throw new TokenExpiredException("Token blacklisted", Instant.now());
-        }
-
-        request.setAttribute("user", appUser);
-        MDC.put(MDC_UID_KEY, appUser.getUsername());
-    }
-
-    // ===================== SKIP PATHS =====================
-
-    private boolean skipRefreshToken(HttpServletRequest request) {
-        String[] paths = {
+    private boolean skipRefreshToken(HttpServletRequest httpServletRequest) {
+        String[] regs = {
                 "/user/refresh-token"
         };
-        for (String path : paths) {
-            Matcher matcher =
-                    Pattern.compile(path).matcher(request.getServletPath());
-            if (matcher.find()) return true;
+        Matcher matcher;
+        for (String pathExpr : regs) {
+            matcher = Pattern.compile(pathExpr).matcher(httpServletRequest.getServletPath());
+            if (matcher.find()) {
+                log.info("Request: PATH: " + httpServletRequest.getServletPath());
+                return true;
+            }
         }
         return false;
     }
 
-    // ===================== ERROR RESPONSE =====================
+    public void generateErrorResponse(HttpServletResponse response, DefaultResponse defaultResponse) throws IOException {
+        generateErrorResponse(response, defaultResponse, HttpServletResponse.SC_UNAUTHORIZED);
+    }
 
-    private void sendError(
-            HttpServletResponse response,
-            String code,
-            String message,
-            int status
-    ) throws IOException {
-
-        DefaultResponse defaultResponse = DefaultResponse.builder()
-                .code(code)
-                .title(ResponseStatus.FAILED.name())
-                .message(message)
-                .build();
-
-        response.setStatus(status);
+    private void generateErrorResponse(HttpServletResponse response, DefaultResponse defaultResponse, int httpStatus) throws IOException {
+        PrintWriter writer = response.getWriter();
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
-
-        PrintWriter writer = response.getWriter();
+        response.setStatus(httpStatus);
         writer.print(new ObjectMapper().writeValueAsString(defaultResponse));
-        writer.flush();
     }
+
 }

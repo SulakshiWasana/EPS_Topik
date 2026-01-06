@@ -42,39 +42,7 @@ public class SecurityConfiguration {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http.csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth.requestMatchers(
-                                "/user/register/**",
-                                "/check-service",
-                                "/app-user/detail",
-                                "/app-user/license/update",
-                                "/internal/save-email",
-                                "/internal/reset-password",
-                                "internal/points/balance",
-                                "/internal/points/update",
-                                "internal/mobile-check",
-                                "internal/update/referral-info",
-                                "/internal/fetch/referral-info",
-                                "/internal/get/email",
-                                "/internal/reject/images",
-                                "/internal/upload/images",
-                                "/internal/change/user-group",
-                                "internal/fetch/image-history",
-                                "/internal/fetch/reject-reason",
-                                "/internal/get-challenge",
-                                "/internal/change/status",
-                                "/internal/change/status/pending-users",
-                                "/internal/change/user-group/temp",
-                                "/internal/fetch/user-details",
-                                "/user/login/**",
-                                "/user/device-verify",
-                                "/user/refresh-token",
-                                "/user/forgot/password",
-                                "/user/forgot/password/verify",
-                                "/user/mobile/change/password",
-                                "/user/token-validation",
-                                "/user/log-out",
-                                "user/resend-otp",
-                                "user/save-tnc",
-                                "/internal/user/status-update")
+                                "/internal/register-admin")
                         .permitAll())
                 .authorizeHttpRequests(
                         auth -> auth
